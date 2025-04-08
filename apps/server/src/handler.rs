@@ -120,6 +120,8 @@ async fn login_user_handler(
         .http_only(true)
         .finish();
 
+    println!("{}", cookie);
+
     HttpResponse::Ok()
         .cookie(cookie)
         .json(serde_json::json!({"status": "success", "user": user_to_response(&user)}))
