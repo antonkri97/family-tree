@@ -9,10 +9,14 @@ import {
 import { LoginFormSchema, UserModel, UserRaw } from "./models/auth";
 import { api } from "./lib/api";
 import { SuccessResponse } from "./models/shared";
+import { AxiosResponse } from "axios";
 
 export interface AuthContext {
   isAuthenticated: boolean;
-  login: (values: LoginFormSchema) => void;
+  initialized: boolean;
+  login: (
+    values: LoginFormSchema,
+  ) => Promise<AxiosResponse<{ user: UserRaw; status: "success" }>>;
   logout: () => void;
   user: UserModel | null;
   isPending: boolean;
@@ -22,35 +26,15 @@ const AuthContext = createContext<AuthContext | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserModel | null>(null);
-  // const queryClient = useQueryClient();
+  const queryClient = useQueryClient();
 
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isFetched } = useQuery({
     queryKey: ["me"],
     queryFn: async () => {
       try {
-        console.log("Запрос 'me' начался");
-        // const res = await Promise.resolve<{
-        //   data: { status: string; user: UserRaw };
-        // }>({
-        //   data: {
-        //     status: "success",
-        //     user: {
-        //       created_at: "2025-03-22T15:12:09.369682",
-        //       email: "test-5@mail.com",
-        //       id: "0018e094-f920-457d-ad14-7b366f551b05",
-        //       name: "test-5",
-        //       photo: "default.png",
-        //       provider: "local",
-        //       role: "user",
-        //       updated_at: "2025-03-22T15:12:09.369682",
-        //       verified: false,
-        //     },
-        //   },
-        // });
         const res = await api.get<{ status: string; user: UserRaw }>(
           "users/me",
         );
-        console.log("Запрос 'me' закончился");
         return new UserModel(res.data.user);
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch (error) {
@@ -77,13 +61,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logoutMutation = useMutation({
     mutationFn: () => api.get<SuccessResponse<undefined>>("auth/logout"),
     onSuccess: () => {
+      queryClient.removeQueries({ queryKey: ["me"] });
       UserModel.removeFromStorage();
       setUser(null);
     },
   });
 
   const login = useCallback(
-    (values: LoginFormSchema) => loginMutation.mutate(values),
+    (values: LoginFormSchema) => loginMutation.mutateAsync(values),
     [loginMutation],
   );
 
@@ -96,6 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         isAuthenticated: !!user,
+        initialized: isFetched,
         user,
         login,
         logout,

@@ -26,13 +26,7 @@ export function LoginForm({
 }: React.ComponentProps<"div">) {
   const auth = useAuth();
   const router = useRouter();
-  const isLoading = useRouterState({ select: (s) => s.isLoading });
   const navigate = Route.useNavigate();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // const search = Route.useSearch();
-
-  const isLoggingIn = isLoading || isSubmitting;
 
   const form = useForm<LoginFormSchema>({
     resolver: zodResolver(loginFormSchema),

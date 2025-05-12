@@ -1,4 +1,5 @@
 use chrono::prelude::*;
+use neo4rs::Graph;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 use uuid::Uuid;
@@ -22,13 +23,15 @@ pub struct User {
 pub struct AppState {
     pub env: config::Config,
     pub pool: Pool<Postgres>,
+    pub graph: Graph,
 }
 
 impl AppState {
-    pub fn init(p: Pool<Postgres>) -> AppState {
+    pub fn init(p: Pool<Postgres>, g: Graph) -> AppState {
         AppState {
             env: config::Config::init(),
             pool: p,
+            graph: g,
         }
     }
 }

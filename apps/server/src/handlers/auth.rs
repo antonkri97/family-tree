@@ -1,22 +1,69 @@
 use crate::{
-    authenticate_token::AuthenticationGuard,
-    google_oauth::{get_google_user, request_token},
-    model::{AppState, LoginUserSchema, QueryCode, RegisterUserSchema, TokenClaims, User},
-    response::{FilteredUser, UserData, UserResponse},
-    user_repo::{
-        create_user, get_user_by_email, get_user_by_email_and_password, get_user_by_id,
-        insert_google_user, update_google_user, user_exists,
-    },
+    handlers::model::{UserData, UserResponse},
+    model::{AppState, LoginUserSchema, RegisterUserSchema, TokenClaims, User},
+    repo::{create_user, get_user_by_email_and_password, get_user_by_id, user_exists},
 };
-use actix_web::http::header::LOCATION;
+use actix_web::{
+    FromRequest, HttpRequest,
+    dev::Payload,
+    error::{Error as ActixWebError, ErrorUnauthorized},
+    http::{self},
+};
 use actix_web::{
     HttpResponse, Responder,
     cookie::{Cookie, time::Duration as ActixWebDuration},
     get, post, web,
 };
 use chrono::{Duration, prelude::*};
-use jsonwebtoken::{EncodingKey, Header, encode};
-use uuid::Uuid;
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use serde_json::json;
+use std::future::{Ready, ready};
+
+use super::model::FilteredUser;
+
+pub struct AuthenticationGuard {
+    pub user_id: String,
+}
+
+impl FromRequest for AuthenticationGuard {
+    type Error = ActixWebError;
+    type Future = Ready<Result<Self, Self::Error>>;
+
+    fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
+        let token = req
+            .cookie("token")
+            .map(|c| c.value().to_string())
+            .or_else(|| {
+                req.headers()
+                    .get(http::header::AUTHORIZATION)
+                    .map(|h| h.to_str().unwrap().split_at(7).1.to_string())
+            });
+
+        if token.is_none() {
+            return ready(Err(ErrorUnauthorized(
+                json!({"status": "fail", "message": "You are not logged in, please provide token"}),
+            )));
+        }
+
+        let data = req.app_data::<web::Data<AppState>>().unwrap();
+
+        let jwt_secret = data.env.jwt_secret.to_owned();
+        let decode = decode::<TokenClaims>(
+            token.unwrap().as_str(),
+            &DecodingKey::from_secret(jwt_secret.as_ref()),
+            &Validation::new(Algorithm::HS256),
+        );
+
+        match decode {
+            Ok(token) => ready(Ok(AuthenticationGuard {
+                user_id: token.claims.sub,
+            })),
+            Err(_) => ready(Err(ErrorUnauthorized(
+                json!({"status": "fail", "message": "Invalid token or usre doesn't exists"}),
+            ))),
+        }
+    }
+}
 
 pub fn user_to_response(user: &User) -> FilteredUser {
     FilteredUser {
@@ -30,13 +77,6 @@ pub fn user_to_response(user: &User) -> FilteredUser {
         created_at: user.created_at.clone(),
         updated_at: user.updated_at.clone(),
     }
-}
-
-#[get("/healthchecker")]
-async fn health_checker_handler() -> impl Responder {
-    const MESSAGE: &str = "How to Implement Google OAuth2 in Rust";
-
-    HttpResponse::Ok().json(serde_json::json!({"status": "success", "message": MESSAGE}))
 }
 
 #[post("/auth/register")]
@@ -79,7 +119,7 @@ async fn login_user_handler(
     let user = match get_user_by_email_and_password(&pool, &body.email, &body.password).await {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return HttpResponse::BadRequest().json(
+            return HttpResponse::Unauthorized().json(
                 serde_json::json!({"status": "fail", "message": "Invalid email or password"}),
             );
         }
@@ -127,104 +167,6 @@ async fn login_user_handler(
         .json(serde_json::json!({"status": "success", "user": user_to_response(&user)}))
 }
 
-#[get("/sessions/oauth/google")]
-async fn google_oauth_handler(
-    query: web::Query<QueryCode>,
-    data: web::Data<AppState>,
-) -> impl Responder {
-    let code = &query.code;
-    let state = &query.state;
-
-    if code.is_empty() {
-        return HttpResponse::Unauthorized().json(
-            serde_json::json!({"status": "fail", "message": "Authorization code not provided!"}),
-        );
-    }
-
-    let token_response = request_token(code.as_str(), &data).await;
-    if token_response.is_err() {
-        let message = token_response.err().unwrap().to_string();
-        return HttpResponse::BadGateway()
-            .json(serde_json::json!({"status": "fail", "message": message}));
-    }
-
-    let token_response = token_response.unwrap();
-    let google_user = get_google_user(&token_response.access_token, &token_response.id_token).await;
-    if google_user.is_err() {
-        let message = google_user.err().unwrap().to_string();
-        return HttpResponse::BadGateway()
-            .json(serde_json::json!({"status": "fail", "message": message}));
-    }
-
-    let google_user = google_user.unwrap();
-
-    let pool = data.pool.clone();
-    let email = google_user.email.to_lowercase();
-    let user = match get_user_by_email(&pool, &email).await {
-        Ok(Some(user)) => Some(user),
-        Ok(None) => None,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "status": "error",
-                "info": e.to_string()
-            }));
-        }
-    };
-
-    let user_id: String;
-
-    if let Some(user) = user {
-        user_id = user.id.unwrap().to_string();
-
-        if let Err(e) = update_google_user(&pool, &user_id, &email, &google_user.picture).await {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "status": "error",
-                "info": e.to_string()
-            }));
-        }
-    } else {
-        let id = Uuid::new_v4();
-        user_id = id.to_owned().to_string();
-
-        if let Err(e) = insert_google_user(&pool, id, google_user).await {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "status": "error",
-                "info": e.to_string()
-            }));
-        }
-    }
-
-    let jwt_secret = data.env.jwt_secret.to_owned();
-    let now = Utc::now();
-    let iat = now.timestamp() as usize;
-    let exp = (now + Duration::minutes(data.env.jwt_max_age)).timestamp() as usize;
-    let claims: TokenClaims = TokenClaims {
-        sub: user_id,
-        exp,
-        iat,
-    };
-
-    let token = encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(jwt_secret.as_ref()),
-    )
-    .unwrap();
-
-    let cookie = Cookie::build("token", token)
-        .path("/")
-        .max_age(ActixWebDuration::new(60 * data.env.jwt_max_age, 0))
-        .http_only(true)
-        .finish();
-
-    let frontend_origin = data.env.client_origin.to_owned();
-    let mut response = HttpResponse::Found();
-
-    response.append_header((LOCATION, format!("{}{}", frontend_origin, state)));
-    response.cookie(cookie);
-    response.finish()
-}
-
 #[get("/auth/logout")]
 async fn logout_handler(_: AuthenticationGuard) -> impl Responder {
     let cookie = Cookie::build("token", "")
@@ -253,16 +195,4 @@ async fn get_me_handler(
             "info": e.to_string()
         })),
     }
-}
-
-pub fn config(conf: &mut web::ServiceConfig) {
-    let scope = web::scope("/api")
-        .service(health_checker_handler)
-        .service(register_user_handler)
-        .service(login_user_handler)
-        .service(google_oauth_handler)
-        .service(logout_handler)
-        .service(get_me_handler);
-
-    conf.service(scope);
 }

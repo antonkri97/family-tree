@@ -12,10 +12,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 });
 
 function RootComponent() {
-  const { isPending } = useAuth();
-  return isPending ? (
-    "...loading"
-  ) : (
+  return (
     <>
       <Outlet />
       <TanStackRouterDevtools position="bottom-right" initialIsOpen={false} />

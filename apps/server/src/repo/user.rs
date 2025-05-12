@@ -3,7 +3,7 @@ use chrono::Local;
 use sqlx::{Error, PgPool};
 use uuid::Uuid;
 
-use crate::{google_oauth::GoogleUserResult, model::User};
+use crate::{handlers::GoogleUserResult, model::User};
 
 pub async fn user_exists(pool: &PgPool, email: &str) -> Result<bool, Error> {
     let exist: Option<bool> =
@@ -53,15 +53,6 @@ pub async fn create_user(
 
     Ok(user)
 }
-
-// /// Поиск пользователя по логину
-// pub async fn get_user_by_username(pool: &PgPool, username: &str) -> Result<Option<User>> {
-//     let user = sqlx::query_as!(User, "SELECT * FROM users WHERE username = $1", username)
-//         .fetch_optional(pool)
-//         .await?;
-
-//     Ok(user)
-// }
 
 pub async fn get_user_by_email(pool: &PgPool, email: &str) -> Result<Option<User>, sqlx::Error> {
     let user = sqlx::query_as!(User, "SELECT * FROM users WHERE email = $1", email,)

@@ -1,10 +1,7 @@
-mod authenticate_token;
 mod config;
-mod google_oauth;
-mod handler;
+mod handlers;
 mod model;
-mod response;
-mod user_repo;
+mod repo;
 
 use actix_cors::Cors;
 use actix_web::middleware::Logger;
@@ -12,6 +9,7 @@ use actix_web::{App, HttpServer, http::header, web};
 use config::Config;
 use dotenv::dotenv;
 use model::AppState;
+use neo4rs::{Graph, query};
 use sqlx::PgPool;
 
 #[actix_web::main]
@@ -24,7 +22,11 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to connect to database");
 
-    let db = AppState::init(pool);
+    let graph = Graph::new("neo4j://localhost:7687", "neo4j", "12345678")
+        .await
+        .unwrap();
+
+    let db = AppState::init(pool, graph);
     let app_data = web::Data::new(db);
     let public_dir = std::env::current_dir().unwrap().join("public");
 
@@ -44,7 +46,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(app_data.clone())
             .service(actix_files::Files::new("/api/images", &public_dir))
-            .configure(handler::config)
+            .configure(handlers::config)
             .wrap(cors)
             .wrap(Logger::default())
     })

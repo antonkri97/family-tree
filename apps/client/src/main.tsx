@@ -4,6 +4,7 @@ import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
 import { useAuth, AuthProvider } from "./auth";
+import { Skeleton } from "./components/ui/skeleton";
 
 // Create a client
 const queryClient = new QueryClient();
@@ -25,7 +26,12 @@ declare module "@tanstack/react-router" {
 
 export function InnerApp() {
   const auth = useAuth();
-  return <RouterProvider router={router} context={{ auth }} />;
+
+  if (auth.initialized) {
+    return <RouterProvider router={router} context={{ auth }} />;
+  }
+
+  return <Skeleton className="w-[100px] h-[20px] rounded-full" />;
 }
 
 export function App() {
